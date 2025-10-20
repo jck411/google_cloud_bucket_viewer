@@ -62,6 +62,8 @@ class GCSService:
             ".webp",
             ".bmp",
         ),
+        include_signed_urls: bool = True,
+        expiration_minutes: int = 60,
     ) -> list[dict[str, Any]]:
         """List all image files in a bucket.
 
@@ -69,6 +71,8 @@ class GCSService:
             bucket_name: Name of the bucket
             prefix: Optional prefix to filter blobs
             extensions: Tuple of valid image extensions
+            include_signed_urls: Whether to generate signed URLs for thumbnails
+            expiration_minutes: URL expiration time in minutes
 
         Returns:
             List of image metadata dictionaries
@@ -79,15 +83,25 @@ class GCSService:
         images = []
         for blob in blobs:
             if blob.name.lower().endswith(extensions):
-                images.append(
-                    {
-                        "name": blob.name,
-                        "size": blob.size,
-                        "content_type": blob.content_type,
-                        "updated": blob.updated.isoformat() if blob.updated else None,
-                        "public_url": blob.public_url if blob.public_url else None,
-                    }
-                )
+                image_data = {
+                    "name": blob.name,
+                    "size": blob.size,
+                    "content_type": blob.content_type,
+                    "updated": blob.updated.isoformat() if blob.updated else None,
+                    "public_url": blob.public_url if blob.public_url else None,
+                    "thumbnail_url": None,
+                }
+
+                if include_signed_urls:
+                    try:
+                        image_data["thumbnail_url"] = self.generate_signed_url(
+                            bucket_name, blob.name, expiration_minutes
+                        )
+                    except Exception:
+                        # If signed URL generation fails, continue without it
+                        pass
+
+                images.append(image_data)
 
         return images
 
@@ -146,3 +160,55 @@ class GCSService:
             }
 
         raise ValueError(f"Blob {blob_name} not found in bucket {bucket_name}")
+
+    def delete_image(self, bucket_name: str, blob_name: str) -> bool:
+        """Delete an image from a bucket.
+
+        Args:
+            bucket_name: Name of the bucket
+            blob_name: Name of the blob to delete
+
+        Returns:
+            True if deleted successfully
+
+        Raises:
+            ValueError: If blob not found
+        """
+        bucket = self.get_bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+
+        if not blob.exists():
+            raise ValueError(f"Blob {blob_name} not found in bucket {bucket_name}")
+
+        blob.delete()
+        return True
+
+    def delete_images(self, bucket_name: str, blob_names: list[str]) -> dict[str, Any]:
+        """Delete multiple images from a bucket.
+
+        Args:
+            bucket_name: Name of the bucket
+            blob_names: List of blob names to delete
+
+        Returns:
+            Dictionary with success count and any errors
+        """
+        bucket = self.get_bucket(bucket_name)
+        results = {"deleted": 0, "failed": 0, "errors": []}
+
+        for blob_name in blob_names:
+            try:
+                blob = bucket.blob(blob_name)
+                if blob.exists():
+                    blob.delete()
+                    results["deleted"] += 1
+                else:
+                    results["failed"] += 1
+                    results["errors"].append(
+                        {"blob_name": blob_name, "error": "Blob not found"}
+                    )
+            except Exception as e:
+                results["failed"] += 1
+                results["errors"].append({"blob_name": blob_name, "error": str(e)})
+
+        return results

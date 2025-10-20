@@ -46,6 +46,7 @@ class ImageInfo(BaseModel):
     content_type: str | None
     updated: str | None
     public_url: str | None = None
+    thumbnail_url: str | None = None
 
 
 class ImageWithSignedUrl(BaseModel):
@@ -63,6 +64,20 @@ class SignedUrlRequest(BaseModel):
 
     blob_name: str
     expiration_minutes: int = 60
+
+
+class DeleteImagesRequest(BaseModel):
+    """Request model for deleting multiple images."""
+
+    blob_names: list[str]
+
+
+class DeleteImagesResponse(BaseModel):
+    """Response model for delete images operation."""
+
+    deleted: int
+    failed: int
+    errors: list[dict[str, str]]
 
 
 # API endpoints
@@ -97,15 +112,18 @@ async def list_buckets():
 
 
 @app.get("/api/images/{bucket_name}", response_model=list[ImageInfo])
-async def list_images(bucket_name: str, prefix: str = ""):
+async def list_images(bucket_name: str, prefix: str = "", thumbnails: bool = True):
     """List all images in a bucket.
 
     Args:
         bucket_name: Name of the bucket
         prefix: Optional prefix to filter images
+        thumbnails: Whether to generate signed URLs for thumbnails (default: True)
     """
     try:
-        images = gcs_service.list_images(bucket_name, prefix=prefix)
+        images = gcs_service.list_images(
+            bucket_name, prefix=prefix, include_signed_urls=thumbnails
+        )
         return images
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list images: {str(e)}")
@@ -153,6 +171,40 @@ async def generate_signed_url(bucket_name: str, request: SignedUrlRequest):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to generate signed URL: {str(e)}"
+        )
+
+
+@app.delete("/api/images/{bucket_name}/{blob_name:path}")
+async def delete_image(bucket_name: str, blob_name: str):
+    """Delete a single image from a bucket.
+
+    Args:
+        bucket_name: Name of the bucket
+        blob_name: Name of the blob to delete
+    """
+    try:
+        gcs_service.delete_image(bucket_name, blob_name)
+        return {"success": True, "message": f"Image {blob_name} deleted successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
+
+
+@app.post("/api/images/{bucket_name}/delete", response_model=DeleteImagesResponse)
+async def delete_images(bucket_name: str, request: DeleteImagesRequest):
+    """Delete multiple images from a bucket.
+
+    Args:
+        bucket_name: Name of the bucket
+        request: Request with list of blob names to delete
+    """
+    try:
+        result = gcs_service.delete_images(bucket_name, request.blob_names)
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete images: {str(e)}"
         )
 
 

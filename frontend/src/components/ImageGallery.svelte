@@ -10,6 +10,9 @@
     let prefix = "";
     let selectedImage = null;
     let showModal = false;
+    let selectionMode = false;
+    let selectedImages = new Set();
+    let deleting = false;
 
     $: if (bucket) {
         loadImages();
@@ -60,6 +63,85 @@
     function handleImageKeydown(event, image) {
         if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
+            if (selectionMode) {
+                toggleSelection(image);
+            } else {
+                openImage(image);
+            }
+        }
+    }
+
+    function toggleSelectionMode() {
+        selectionMode = !selectionMode;
+        if (!selectionMode) {
+            selectedImages.clear();
+            selectedImages = selectedImages;
+        }
+    }
+
+    function toggleSelection(image) {
+        if (selectedImages.has(image.name)) {
+            selectedImages.delete(image.name);
+        } else {
+            selectedImages.add(image.name);
+        }
+        selectedImages = selectedImages;
+    }
+
+    function selectAll() {
+        selectedImages = new Set(images.map((img) => img.name));
+    }
+
+    function deselectAll() {
+        selectedImages.clear();
+        selectedImages = selectedImages;
+    }
+
+    async function deleteSelected() {
+        if (selectedImages.size === 0) return;
+
+        const count = selectedImages.size;
+        const confirmed = confirm(
+            `Are you sure you want to delete ${count} image${count !== 1 ? "s" : ""}?`,
+        );
+
+        if (!confirmed) return;
+
+        deleting = true;
+        try {
+            const result = await api.deleteImages(
+                bucket,
+                Array.from(selectedImages),
+            );
+
+            if (result.deleted > 0) {
+                alert(
+                    `Successfully deleted ${result.deleted} image${result.deleted !== 1 ? "s" : ""}` +
+                        (result.failed > 0
+                            ? `. Failed to delete ${result.failed}.`
+                            : ""),
+                );
+                selectedImages.clear();
+                selectedImages = selectedImages;
+                await loadImages();
+            }
+
+            if (result.errors.length > 0) {
+                console.error("Delete errors:", result.errors);
+            }
+        } catch (err) {
+            console.error("Failed to delete images:", err);
+            alert("Failed to delete images: " + err.message);
+        } finally {
+            deleting = false;
+        }
+    }
+
+    function handleCardClick(image, event) {
+        if (selectionMode) {
+            event.stopPropagation();
+            toggleSelection(image);
+        } else {
             openImage(image);
         }
     }
@@ -76,7 +158,38 @@
                 on:keypress={(e) => e.key === "Enter" && handleSearch()}
             />
             <button on:click={handleSearch}>Search</button>
+            <button
+                class="select-btn"
+                class:active={selectionMode}
+                on:click={toggleSelectionMode}
+            >
+                {selectionMode ? "Cancel" : "Select"}
+            </button>
         </div>
+        {#if selectionMode}
+            <div class="selection-toolbar">
+                <div class="selection-info">
+                    {selectedImages.size} selected
+                </div>
+                <div class="selection-actions">
+                    <button class="action-btn" on:click={selectAll}
+                        >Select All</button
+                    >
+                    <button class="action-btn" on:click={deselectAll}
+                        >Deselect All</button
+                    >
+                    <button
+                        class="delete-btn"
+                        on:click={deleteSelected}
+                        disabled={selectedImages.size === 0 || deleting}
+                    >
+                        {deleting
+                            ? "Deleting..."
+                            : `Delete (${selectedImages.size})`}
+                    </button>
+                </div>
+            </div>
+        {/if}
     </div>
 
     {#if loading}
@@ -103,13 +216,34 @@
             {#each images as image}
                 <div
                     class="image-card"
+                    class:selected={selectedImages.has(image.name)}
+                    class:selection-mode={selectionMode}
                     role="button"
                     tabindex="0"
-                    on:click={() => openImage(image)}
+                    on:click={(e) => handleCardClick(image, e)}
                     on:keydown={(e) => handleImageKeydown(e, image)}
                 >
-                    <div class="image-placeholder">
-                        <span class="image-icon">🖼️</span>
+                    {#if selectionMode}
+                        <div class="selection-checkbox">
+                            <input
+                                type="checkbox"
+                                checked={selectedImages.has(image.name)}
+                                on:change|stopPropagation={() =>
+                                    toggleSelection(image)}
+                                on:click|stopPropagation
+                            />
+                        </div>
+                    {/if}
+                    <div class="image-thumbnail">
+                        {#if image.thumbnail_url}
+                            <img
+                                src={image.thumbnail_url}
+                                alt={image.name}
+                                loading="lazy"
+                            />
+                        {:else}
+                            <span class="image-icon">🖼️</span>
+                        {/if}
                     </div>
                     <div class="image-info">
                         <div class="image-name" title={image.name}>
@@ -189,6 +323,81 @@
         background: #5568d3;
     }
 
+    .select-btn {
+        background: #48bb78 !important;
+    }
+
+    .select-btn:hover {
+        background: #38a169 !important;
+    }
+
+    .select-btn.active {
+        background: #e53e3e !important;
+    }
+
+    .select-btn.active:hover {
+        background: #c53030 !important;
+    }
+
+    .selection-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 1rem;
+        padding: 0.75rem 1rem;
+        background: #f7fafc;
+        border-radius: 8px;
+        border: 2px solid #e2e8f0;
+    }
+
+    .selection-info {
+        font-weight: 600;
+        color: #4a5568;
+    }
+
+    .selection-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .action-btn {
+        padding: 0.5rem 1rem;
+        background: white;
+        color: #4a5568;
+        border: 1px solid #cbd5e0;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .action-btn:hover {
+        background: #edf2f7;
+        border-color: #a0aec0;
+    }
+
+    .delete-btn {
+        padding: 0.5rem 1rem;
+        background: #e53e3e;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .delete-btn:hover:not(:disabled) {
+        background: #c53030;
+    }
+
+    .delete-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
     .loading {
         text-align: center;
         padding: 3rem;
@@ -248,6 +457,7 @@
         overflow: hidden;
         cursor: pointer;
         transition: all 0.2s;
+        position: relative;
     }
 
     .image-card:hover {
@@ -255,12 +465,46 @@
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     }
 
-    .image-placeholder {
+    .image-card.selected {
+        border: 3px solid #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+    }
+
+    .selection-checkbox {
+        position: absolute;
+        top: 0.5rem;
+        left: 0.5rem;
+        z-index: 10;
+        background: white;
+        border-radius: 4px;
+        padding: 0.25rem;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .selection-checkbox input[type="checkbox"] {
+        width: 1.25rem;
+        height: 1.25rem;
+        cursor: pointer;
+    }
+
+    .image-thumbnail {
         aspect-ratio: 1;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         display: flex;
         align-items: center;
         justify-content: center;
+        overflow: hidden;
+    }
+
+    .image-thumbnail img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.2s;
+    }
+
+    .image-card:hover .image-thumbnail img {
+        transform: scale(1.05);
     }
 
     .image-icon {

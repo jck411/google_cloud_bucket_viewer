@@ -29,5 +29,21 @@ export const api = {
             expiration_minutes: expirationMinutes
         })
         return response.data.signed_url
+    },
+
+    async deleteImage(bucketName, blobName) {
+        const encodedBlobName = encodeURIComponent(blobName)
+        const response = await axios.delete(
+            `${API_BASE_URL}/api/images/${bucketName}/${encodedBlobName}`
+        )
+        return response.data
+    },
+
+    async deleteImages(bucketName, blobNames) {
+        const response = await axios.post(
+            `${API_BASE_URL}/api/images/${bucketName}/delete`,
+            { blob_names: blobNames }
+        )
+        return response.data
     }
 }
